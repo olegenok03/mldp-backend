@@ -3,8 +3,8 @@
 import asyncio
 
 # "База" магазинов: цена и время ответа API в секундах. НЕ менять.
-PRICES: dict[str, int] = {"ozon": 990, "wb": 950, "yandex": 1100, "slow_shop": 900}
-DELAYS: dict[str, float] = {"ozon": 0.3, "wb": 0.2, "yandex": 0.4, "slow_shop": 5.0}
+PRICES: dict[str, int] = {'ozon': 990, 'wb': 950, 'yandex': 1100, 'slow_shop': 900}
+DELAYS: dict[str, float] = {'ozon': 0.3, 'wb': 0.2, 'yandex': 0.4, 'slow_shop': 5.0}
 
 
 async def fetch_price(shop: str) -> int:
@@ -24,7 +24,7 @@ async def get_prices_sequential(shops: list[str]) -> list[int]:
 
     Подсказка: обычный цикл for и await fetch_price(...) внутри.
     """
-    raise NotImplementedError
+    return [await fetch_price(shop) for shop in shops]
 
 
 # ---------- Задача 1.2 ----------
@@ -35,7 +35,8 @@ async def get_prices_concurrent(shops: list[str]) -> list[int]:
 
     Подсказка: asyncio.gather.
     """
-    raise NotImplementedError
+    coros = [fetch_price(shop) for shop in shops]
+    return await asyncio.gather(*coros)
 
 
 # ---------- Задача 1.3 ----------
@@ -46,15 +47,22 @@ async def get_price_or_none(shop: str, timeout: float = 1.0) -> int | None:
 
     Подсказка: asyncio.wait_for и except TimeoutError.
     """
-    raise NotImplementedError
+    try:
+        price = await asyncio.wait_for(fetch_price(shop), timeout)
+        return price
+    except TimeoutError:
+        return None
 
 
-async def get_prices_with_timeout(shops: list[str], timeout: float = 1.0) -> list[int | None]:
+async def get_prices_with_timeout(
+    shops: list[str], timeout: float = 1.0
+) -> list[int | None]:
     """Как get_prices_concurrent, но медленные магазины дают None, а не тормозят всех.
 
     Подсказка: gather по get_price_or_none.
     """
-    raise NotImplementedError
+    coros = [get_price_or_none(shop, timeout) for shop in shops]
+    return await asyncio.gather(*coros)
 
 
 # ---------- Задача 1.4 (дополнительная) ----------
@@ -68,18 +76,20 @@ async def get_prices_limited(shops: list[str], limit: int = 3) -> list[int]:
     raise NotImplementedError
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     import time
 
     async def main() -> None:
-        shops = ["ozon", "wb", "yandex"]
+        shops = ['ozon', 'wb', 'yandex']
         for fn in (get_prices_sequential, get_prices_concurrent):
             start = time.perf_counter()
             result = await fn(shops)
-            print(f"{fn.__name__:25} {time.perf_counter() - start:.2f}s  {result}")
+            print(f'{fn.__name__:25} {time.perf_counter() - start:.2f}s  {result}')
 
         start = time.perf_counter()
-        result_with_timeout = await get_prices_with_timeout(shops + ["slow_shop"])
-        print(f"{'get_prices_with_timeout':25} {time.perf_counter() - start:.2f}s  {result_with_timeout}")
+        result_with_timeout = await get_prices_with_timeout(shops + ['slow_shop'])
+        print(
+            f'{"get_prices_with_timeout":25} {time.perf_counter() - start:.2f}s  {result_with_timeout}'
+        )
 
     asyncio.run(main())
