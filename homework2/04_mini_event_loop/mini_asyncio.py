@@ -14,7 +14,7 @@
 """
 
 import time
-from collections import deque
+from collections import defaultdict, deque
 from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
@@ -29,12 +29,14 @@ class Sleep:
     duration: float
 
 
-# TODO
+@dataclass
+class AwaitTask:
+    tid: int
 
 
 # ---- Scheduler + global "current running loop" ----
 
-_current: "Scheduler | None" = None
+_current: 'Scheduler | None' = None
 
 
 class Scheduler:
@@ -43,6 +45,8 @@ class Scheduler:
         self.ready: deque[tuple[int, Task, Any]] = deque()
         self.sleeping: list[tuple[float, int, Task]] = []
         # TODO: state для waiters / results
+        self.waiters: dict[int, list[tuple[int, Task]]] = defaultdict(list)
+        self.results: dict[int, Any] = {}
         self.next_id = 0
 
     def _new_tid(self) -> int:
@@ -55,7 +59,7 @@ class Scheduler:
         return tid
 
     def run(self, main: Task) -> None:
-        global _current  # noqa: PLW0603  # аналог asyncio._running_loop
+        global _current  # аналог asyncio._running_loop
         _current = self
         try:
             self.create_task(main)
@@ -69,8 +73,7 @@ class Scheduler:
             _current = None
 
     def _has_work(self) -> bool:
-        # TODO
-        return bool(self.ready or self.sleeping)
+        return bool(self.ready or self.sleeping or self.waiters)
 
     def _wake_sleeping(self) -> None:
         now = time.monotonic()
@@ -86,7 +89,8 @@ class Scheduler:
         if self.sleeping:
             next_wake = min(w for w, _, _ in self.sleeping)
             time.sleep(max(0.0, next_wake - time.monotonic()))
-        # TODO: deadlock detection
+        elif self.waiters:
+            raise RuntimeError('deadlock')
 
     def _step_one(self) -> None:
         tid, task, value = self.ready.popleft()
@@ -97,15 +101,21 @@ class Scheduler:
             return
         self._handle_syscall(tid, task, syscall)
 
-    def _finish_task(self, tid: int, result: Any) -> None:  # noqa: ANN401
-        raise NotImplementedError
+    def _finish_task(self, tid: int, result: Any) -> None:
+        self.results[tid] = result
+        for waiter_tid, waiter_task in self.waiters.pop(tid, []):
+            self.ready.append((waiter_tid, waiter_task, result))
 
-    def _handle_syscall(self, tid: int, task: Task, syscall: Any) -> None:  # noqa: ANN401
+    def _handle_syscall(self, tid: int, task: Task, syscall: Any) -> None:
         if isinstance(syscall, Sleep):
             self.sleeping.append((time.monotonic() + syscall.duration, tid, task))
-        # TODO: case для AwaitTask
+        elif isinstance(syscall, AwaitTask):
+            if syscall.tid in self.results:
+                self.ready.append((tid, task, self.results[syscall.tid]))
+                return
+            self.waiters[syscall.tid].append((tid, task))
         else:
-            raise RuntimeError(f"unknown syscall: {syscall!r}")
+            raise RuntimeError(f'unknown syscall: {syscall!r}')
 
 
 # ---- Публичный API - имитируем asyncio ----
@@ -120,13 +130,13 @@ def create_task(coro: Task) -> int:
     """Аналог asyncio.create_task(). Синхронно (без yield) регистрирует
     coro в running loop'е, возвращает handle (tid)."""
     if _current is None:
-        raise RuntimeError("нет running loop'а (вызывай из main через run())")  # noqa: RUF001
+        raise RuntimeError("нет running loop'а (вызывай из main через run())")
     return _current.create_task(coro)
 
 
-# TODO: await_task(tid) helper
 def await_task(tid: int) -> Task:
-    raise NotImplementedError
+    result = yield AwaitTask(tid)
+    return result
 
 
 def run(main: Task) -> None:
